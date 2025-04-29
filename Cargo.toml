@@ -1,0 +1,22 @@
+[package]
+name = "rerun-loader-mcap"
+version = "0.1.0"
+edition = "2024"
+license = "MIT OR Apache-2.0"
+description = "MCAP data-loader plugin for the Rerun Viewer"
+
+[dependencies]
+ros2-interfaces-humble = { version = "0.0.1", features = ["sensor_msgs"] }
+rerun = "0.23.1"
+anyhow = "1.0"
+argh = "0.1"
+mcap = "0.17.0"
+thiserror = "2.0.12"
+ctrlc = "3.4.6"
+log = "0.4.27"
+memmap2 = "0.9.5"
+cdr = "0.2.4"
+colorgrad = "0.7.1"
+libyuv = "1.0.0"
+image = "0.25.6"
+zstd = "0.13.3"
