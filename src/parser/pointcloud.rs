@@ -87,9 +87,9 @@ impl Parser {
                 PointField::FLOAT64 => |x| f64::from(f64::from_ne_bytes(x.try_into().unwrap())),
                 0_u8 | 9_u8..=u8::MAX => panic!("Can not match decode function, invalid datatype."),
             };
-            let mut values: Vec<f64> =
-                Vec::with_capacity((message.height * message.width) as usize);
-            for idx in 0..message.row_step {
+            let num_points = (message.width * message.height);
+            let mut values: Vec<f64> = Vec::with_capacity(num_points as usize);
+            for idx in 0..num_points {
                 let idx_start = message.point_step * idx + field.offset;
                 let idx_end = idx_start + field.count * field_size as u32;
                 let buf = &message.data[idx_start as usize..idx_end as usize];
@@ -125,22 +125,21 @@ impl Extractor for Parser {
         let intensity = decoded["intensity"].iter().map(|p| *p as f32);
 
         // Visualize?
-        if let Some(rec) = &self.rec_stream {
-            let colors = intensity.map(|i| {
-                let [r, g, b, a] = self.color_map.at(i).to_rgba8();
-                rerun::Color::from_unmultiplied_rgba(r, g, b, a)
-            });
-            rec.set_timestamp_secs_since_epoch(
-                "main",
-                cloud_msg.header.stamp.sec as f64 + cloud_msg.header.stamp.nanosec as f64 * 1e-9,
-            );
-            rec.log(
-                message.channel.topic.clone(),
-                &rerun::Points3D::new(xyz)
-                    .with_colors(colors)
-                    .with_radii([0.01]),
-            )?;
-        }
+        let rec = &self.rec_stream.clone().unwrap();
+        let colors = intensity.map(|i| {
+            let [r, g, b, a] = self.color_map.at(i).to_rgba8();
+            rerun::Color::from_unmultiplied_rgba(r, g, b, a)
+        });
+        rec.set_timestamp_secs_since_epoch(
+            "main",
+            cloud_msg.header.stamp.sec as f64 + cloud_msg.header.stamp.nanosec as f64 * 1e-9,
+        );
+        rec.log(
+            message.channel.topic.clone(),
+            &rerun::Points3D::new(xyz)
+                .with_colors(colors)
+                .with_radii([0.01]),
+        )?;
 
         Ok(())
     }

@@ -185,14 +185,6 @@ pub fn process(
         }
         let msg = message?;
 
-        // Trim start/end
-        if msg.publish_time < trim_start as u64 {
-            continue;
-        }
-        if msg.publish_time > trim_end as u64 {
-            break;
-        }
-
         // Parse message
         let topic_name = msg.channel.topic.as_str();
         let Some(parser) = parsers.get_mut(topic_name) else {

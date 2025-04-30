@@ -90,9 +90,6 @@ fn main() -> anyhow::Result<()> {
     })
     .expect("Error setting Ctrl-C handler");
 
-    // Where do we begin?
-    let timepoint = timepoint_from_args(&args)?;
-
     // Process the file
     let _ = process(&args.filepath, sigint, rec, i64::MIN, i64::MAX)?;
 
