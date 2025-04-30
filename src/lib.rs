@@ -2,9 +2,8 @@ mod extractor;
 mod parser;
 
 use extractor::Extractor;
-use log::{error, info, warn};
+use log::{error, warn};
 use parser::{compressed_image, image, pointcloud, timestamp};
-use std::sync::{Arc, atomic::AtomicBool};
 use std::{collections::HashMap, fs, io, path::PathBuf};
 
 #[derive(thiserror::Error, Debug)]
@@ -114,10 +113,8 @@ pub fn summary(files: &Vec<PathBuf>) -> Result<Vec<Topic>, Error> {
 
 pub fn process(
     file: &PathBuf,
-    sigint: Arc<AtomicBool>,
-    vis_stream: rerun::RecordingStream,
-    trim_start: i64,
-    trim_end: i64,
+    entity_path_prefix: &rerun::EntityPath,
+    rerun_stream: rerun::RecordingStream,
 ) -> Result<(), Error> {
     // Create a parser group for all different topics.
     let mut parsers: HashMap<
@@ -126,34 +123,30 @@ pub fn process(
     > = HashMap::new();
 
     let topics = summary(&vec![file.clone()]).expect("Topic names should be available");
-    let output_dir = PathBuf::from(file.file_stem().unwrap());
-    let dump_data = false;
     for topic in topics.iter() {
         // Create parser by topic format
         match topic.format.as_str() {
             "builtin_interfaces/msg/Time" => {
                 parsers.insert(
                     topic.name.as_str(),
-                    Box::new(timestamp::Parser::new(Some(vis_stream.clone()))),
+                    Box::new(timestamp::Parser::new(
+                        rerun_stream.clone(),
+                        entity_path_prefix,
+                    )),
                 );
             }
             "sensor_msgs/msg/Image" => {
                 parsers.insert(
                     topic.name.as_str(),
-                    Box::new(image::Parser::new(
-                        &output_dir,
-                        Some(vis_stream.clone()),
-                        dump_data,
-                    )),
+                    Box::new(image::Parser::new(rerun_stream.clone(), entity_path_prefix)),
                 );
             }
             "sensor_msgs/msg/CompressedImage" => {
                 parsers.insert(
                     topic.name.as_str(),
                     Box::new(compressed_image::Parser::new(
-                        &output_dir,
-                        Some(vis_stream.clone()),
-                        dump_data,
+                        rerun_stream.clone(),
+                        entity_path_prefix,
                     )),
                 );
             }
@@ -161,9 +154,8 @@ pub fn process(
                 parsers.insert(
                     topic.name.as_str(),
                     Box::new(pointcloud::Parser::new(
-                        &output_dir,
-                        Some(vis_stream.clone()),
-                        dump_data,
+                        rerun_stream.clone(),
+                        entity_path_prefix,
                         Some(1.0),
                         Some(1.0),
                     )),
@@ -179,10 +171,6 @@ pub fn process(
 
     // Enumerate all messages
     for message in mcap::MessageStream::new(&mmap)? {
-        // Check for interrupt
-        if sigint.load(std::sync::atomic::Ordering::Relaxed) {
-            return Err(Error::Interrupted);
-        }
         let msg = message?;
 
         // Parse message
@@ -192,14 +180,6 @@ pub fn process(
         };
         parser
             .step(&msg)
-            .map_err(|e| Error::ParserError(e.to_string()))?;
-    }
-
-    // Post process
-    info!("Post processing...");
-    for (_, parser) in parsers.iter_mut() {
-        parser
-            .post_process(sigint.clone())
             .map_err(|e| Error::ParserError(e.to_string()))?;
     }
 

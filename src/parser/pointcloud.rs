@@ -3,12 +3,7 @@ use colorgrad::Gradient;
 use mcap::Message;
 use rerun::RecordingStream;
 use ros2_interfaces_humble::sensor_msgs::msg::{PointCloud2, PointField};
-use std::{
-    collections::HashMap,
-    fs,
-    path::Path,
-    sync::{Arc, atomic::AtomicBool},
-};
+use std::collections::HashMap;
 
 const ZSTD_MAGIC_NUMBER: [u8; 4] = [0x28, 0xb5, 0x2f, 0xfd];
 
@@ -17,18 +12,23 @@ pub enum Error {
     #[error("ZSTD error. {0}")]
     Zstd(#[from] std::io::Error),
     #[error("CDR error. {0}")]
-    CDR(#[from] cdr::Error),
+    Cdr(#[from] cdr::Error),
 }
 
 pub struct Parser {
     // Visualizer with rerun
-    rec_stream: Option<RecordingStream>,
+    rec_stream: RecordingStream,
+
+    // Entity prefix
+    entity_path_prefix: rerun::EntityPath,
 
     // Scale the points in spatial domain? This could be usefull if users want to visualize the pointcloud in a
     // different spatial scale.
+    #[allow(dead_code)]
     spatial_scale: f32,
 
     // Intensity scale. This is used to scale the intensity values to a range [0, 1].
+    #[allow(dead_code)]
     intensity_scale: f32,
 
     // Color map. Map point cloud intensity to a color.
@@ -37,19 +37,14 @@ pub struct Parser {
 
 impl Parser {
     pub fn new(
-        output_path: &Path,
-        rerun_stream: Option<RecordingStream>,
-        dump_data: bool,
+        rerun_stream: RecordingStream,
+        entity_path_prefix: &rerun::EntityPath,
         spatial_scale: Option<f32>,
         intensity_scale: Option<f32>,
     ) -> Self {
-        // Create output dir
-        if dump_data {
-            fs::create_dir_all(output_path).unwrap();
-        }
-
         Parser {
             rec_stream: rerun_stream,
+            entity_path_prefix: entity_path_prefix.to_owned(),
             spatial_scale: spatial_scale.unwrap_or(1.0),
             intensity_scale: intensity_scale.unwrap_or(1.0),
             color_map: colorgrad::GradientBuilder::new()
@@ -84,10 +79,10 @@ impl Parser {
                 PointField::INT32 => |x| f64::from(i32::from_ne_bytes(x.try_into().unwrap())),
                 PointField::UINT32 => |x| f64::from(u32::from_ne_bytes(x.try_into().unwrap())),
                 PointField::FLOAT32 => |x| f64::from(f32::from_ne_bytes(x.try_into().unwrap())),
-                PointField::FLOAT64 => |x| f64::from(f64::from_ne_bytes(x.try_into().unwrap())),
+                PointField::FLOAT64 => |x| f64::from_ne_bytes(x.try_into().unwrap()),
                 0_u8 | 9_u8..=u8::MAX => panic!("Can not match decode function, invalid datatype."),
             };
-            let num_points = (message.width * message.height);
+            let num_points = message.width * message.height;
             let mut values: Vec<f64> = Vec::with_capacity(num_points as usize);
             for idx in 0..num_points {
                 let idx_start = message.point_step * idx + field.offset;
@@ -97,7 +92,7 @@ impl Parser {
             }
             decoded.insert(field_name.to_string(), values);
         }
-        return decoded;
+        decoded
     }
 }
 
@@ -106,14 +101,14 @@ impl Extractor for Parser {
 
     fn step(&mut self, message: &Message) -> Result<(), Self::ExtractorError> {
         let buf = message.data.as_ref();
-        let serialized = if &message.data[..4] == ZSTD_MAGIC_NUMBER {
-            zstd::stream::decode_all(buf).map_err(|e| Error::Zstd(e))?
+        let serialized = if message.data[..4] == ZSTD_MAGIC_NUMBER {
+            zstd::stream::decode_all(buf).map_err(Error::Zstd)?
         } else {
             message.data.to_vec()
         };
         let cloud_msg =
             cdr::deserialize_from::<_, PointCloud2, _>(serialized.as_slice(), cdr::size::Infinite)
-                .map_err(|e| Error::CDR(e))?;
+                .map_err(Error::Cdr)?;
 
         // Extract points and intensity
         let decoded = self.decode(&cloud_msg);
@@ -125,26 +120,24 @@ impl Extractor for Parser {
         let intensity = decoded["intensity"].iter().map(|p| *p as f32);
 
         // Visualize?
-        let rec = &self.rec_stream.clone().unwrap();
         let colors = intensity.map(|i| {
             let [r, g, b, a] = self.color_map.at(i).to_rgba8();
             rerun::Color::from_unmultiplied_rgba(r, g, b, a)
         });
-        rec.set_timestamp_secs_since_epoch(
+        self.rec_stream.set_timestamp_secs_since_epoch(
             "main",
             cloud_msg.header.stamp.sec as f64 + cloud_msg.header.stamp.nanosec as f64 * 1e-9,
         );
-        rec.log(
-            message.channel.topic.clone(),
+        self.rec_stream.log(
+            self.entity_path_prefix
+                .join(&rerun::EntityPath::from_single_string(
+                    message.channel.topic.clone(),
+                )),
             &rerun::Points3D::new(xyz)
                 .with_colors(colors)
                 .with_radii([0.01]),
         )?;
 
-        Ok(())
-    }
-
-    fn post_process(&mut self, _sigint: Arc<AtomicBool>) -> Result<(), Self::ExtractorError> {
         Ok(())
     }
 }

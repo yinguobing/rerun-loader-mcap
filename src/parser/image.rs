@@ -2,12 +2,6 @@ use crate::extractor::Extractor;
 use mcap::Message;
 use rerun::RecordingStream;
 use ros2_interfaces_humble::sensor_msgs::msg::Image;
-use std::{
-    fs,
-    io::Write,
-    path::{Path, PathBuf},
-    sync::{Arc, atomic::AtomicBool},
-};
 
 const ZSTD_MAGIC_NUMBER: [u8; 4] = [0x28, 0xb5, 0x2f, 0xfd];
 
@@ -16,31 +10,22 @@ pub enum Error {
     #[error("ZSTD error. {0}")]
     Zstd(#[from] std::io::Error),
     #[error("CDR error. {0}")]
-    CDR(#[from] cdr::Error),
+    Cdr(#[from] cdr::Error),
 }
 
 pub struct Parser {
-    // Output directory
-    output_dir: PathBuf,
-
     // Visualizer with rerun
-    rec_stream: Option<RecordingStream>,
+    rec_stream: RecordingStream,
 
-    // Should dump data to disk
-    dump_data: bool,
+    // Entity prefix
+    entity_path_prefix: rerun::EntityPath,
 }
 
 impl Parser {
-    pub fn new(output_path: &Path, rerun_stream: Option<RecordingStream>, dump_data: bool) -> Self {
-        // Create output dir
-        if dump_data {
-            fs::create_dir_all(output_path).unwrap();
-        }
-
+    pub fn new(rerun_stream: RecordingStream, entity_path_prefix: &rerun::EntityPath) -> Self {
         Parser {
-            output_dir: output_path.into(),
             rec_stream: rerun_stream,
-            dump_data,
+            entity_path_prefix: entity_path_prefix.to_owned(),
         }
     }
 }
@@ -50,14 +35,14 @@ impl Extractor for Parser {
 
     fn step(&mut self, message: &Message) -> Result<(), Self::ExtractorError> {
         let buf = message.data.as_ref();
-        let serialized = if &message.data[..4] == ZSTD_MAGIC_NUMBER {
-            zstd::stream::decode_all(buf).map_err(|e| Error::Zstd(e))?
+        let serialized = if message.data[..4] == ZSTD_MAGIC_NUMBER {
+            zstd::stream::decode_all(buf).map_err(Error::Zstd)?
         } else {
             message.data.to_vec()
         };
         let image_msg =
             cdr::deserialize_from::<_, Image, _>(serialized.as_slice(), cdr::size::Infinite)
-                .map_err(|e| Error::CDR(e))?;
+                .map_err(Error::Cdr)?;
 
         if image_msg.encoding != "nv12" {
             return Ok(());
@@ -80,42 +65,23 @@ impl Extractor for Parser {
                 height_rgb as i32,
             )
         };
-        if let Some(rec) = &self.rec_stream {
-            rec.set_timestamp_secs_since_epoch(
-                "main",
-                image_msg.header.stamp.sec as f64 + image_msg.header.stamp.nanosec as f64 * 1e-9,
-            );
-            rec.log(
-                format!("image/{}", message.channel.topic.clone()),
-                &rerun::Image::from_elements(
-                    rgb.as_ref(),
-                    [image_msg.width, height_rgb as u32],
-                    rerun::ColorModel::RGB,
-                ),
-            )?;
-        }
 
-        // Create output file
-        if self.dump_data {
-            let mut file = fs::File::create(
-                &self
-                    .output_dir
-                    .join(format!("{}.bin", message.publish_time)),
-            )?;
-            file.write_all(&image_msg.data)?;
-            let img = image::RgbImage::from_vec(image_msg.width, height_rgb as u32, rgb)
-                .expect("Image should be valid");
+        self.rec_stream.set_timestamp_secs_since_epoch(
+            "main",
+            image_msg.header.stamp.sec as f64 + image_msg.header.stamp.nanosec as f64 * 1e-9,
+        );
+        self.rec_stream.log(
+            self.entity_path_prefix
+                .join(&rerun::EntityPath::from_single_string(
+                    message.channel.topic.clone(),
+                )),
+            &rerun::Image::from_elements(
+                rgb.as_ref(),
+                [image_msg.width, height_rgb as u32],
+                rerun::ColorModel::RGB,
+            ),
+        )?;
 
-            img.save(
-                &self
-                    .output_dir
-                    .join(format!("{}.jpg", message.publish_time)),
-            )?;
-        }
-        Ok(())
-    }
-
-    fn post_process(&mut self, _sigint: Arc<AtomicBool>) -> Result<(), Self::ExtractorError> {
         Ok(())
     }
 }
