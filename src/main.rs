@@ -13,7 +13,11 @@ struct Args {
     #[argh(positional)]
     filepath: std::path::PathBuf,
 
-    /// optional recommended ID for the application
+    /// the recommended ApplicationId to log the data to
+    #[argh(option)]
+    application_id: Option<String>,
+
+    /// the ApplicationId that is currently opened in the viewer, if any.
     #[argh(option)]
     opened_application_id: Option<String>,
 
@@ -68,14 +72,10 @@ fn main() -> anyhow::Result<()> {
 
     // Rerun stream
     let rec = {
-        let mut rec = rerun::RecordingStreamBuilder::new(
-            args.opened_application_id
-                .as_deref()
-                .unwrap_or("MCAP loader"),
-        );
-        if let Some(recording_id) = args.opened_recording_id.as_ref() {
-            rec = rec.recording_id(recording_id);
-        };
+        let app_id = args.application_id.or(args.opened_application_id).unwrap();
+        let mut rec = rerun::RecordingStreamBuilder::new(app_id);
+        let rec_id = args.recording_id.or(args.opened_recording_id).unwrap();
+        rec = rec.recording_id(rec_id);
 
         // The most important part of this: log to standard output so the Rerun Viewer can ingest it!
         rec.stdout()?
