@@ -20,3 +20,26 @@ colorgrad = "0.7.1"
 libyuv = "1.0.0"
 image = "0.25.6"
 zstd = "0.13.3"
+
+# To package a DEB package
+[package.metadata.deb]
+maintainer = "Yin Guobing <yinguobing@gmail.com>"
+copyright = "2024, Yin Guobing <yinguobing@gmail.com>"
+license-file = ["LICENSE", "4"]
+extended-description = """\
+MCAP data-loader plugin for the Rerun Viewer."""
+depends = "$auto"
+section = "utility"
+priority = "optional"
+assets = [
+    [
+        "target/release/rerun-loader-mcap",
+        "usr/bin/",
+        "755",
+    ],
+    [
+        "README.md",
+        "usr/share/doc/rerun-loader-mcap/README",
+        "644",
+    ],
+]
