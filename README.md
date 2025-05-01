@@ -6,13 +6,13 @@ Visualize MCAP content in Rerun viewer.
 ## Install
 Download the latest installation package from the [release](https://github.com/yinguobing/rerun-loader-mcap/releases/) page. 
 
-Install:`
+Install
 ```bash
 dpkg -i rerun-loader-mcap_VERSION.deb
 ```
 
 ## Usage
-Open Rerun viewer:
+Open Rerun viewer
 ```bash
 rerun
 ```
